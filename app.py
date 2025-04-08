@@ -1,277 +1,428 @@
+"""
+AI Copywriting Agent with Google Gemini 2.0 Pro.
+
+This application provides:
+1. Content generation with direct-response marketing principles
+2. SEO analysis and optimization
+3. Social media content optimization
+4. Video analysis for Instagram Reels and YouTube Shorts
+"""
+
+import os
 import streamlit as st
-import json
 from datetime import datetime
-from typing import List
+from dotenv import load_dotenv
+import tempfile
 
-from models import ContentRequest, ContentType, ToneType, AudienceType, ContentResponse
-from graph_agent import CopywritingGraphAgent
-
-# Page configuration
-st.set_page_config(
-    page_title="AI Copywriting Agent",
-    page_icon="✍️",
-    layout="wide",
-    initial_sidebar_state="expanded",
+# Import from our modular structure
+from src.models import (
+    ContentType,
+    ToneType,
+    AudienceType,
+    SocialPlatform,
+    VideoContentType,
+    ContentRequest,
+    VideoAnalysisRequest,
 )
+from src.api import GeminiAPI, BraveSearchAPI
+from src.analysis import SEOAnalyzer
+from src.analysis.improved_video_analyzer import ImprovedVideoAnalyzer
+from src.ui import (
+    display_header,
+    display_sidebar,
+    display_content_form,
+    display_video_form,
+    display_seo_analysis,
+    display_enhanced_seo_analysis,
+    display_video_analysis_results,
+)
+
+# Load environment variables
+load_dotenv()
 
 # Initialize session state
 if "content_history" not in st.session_state:
     st.session_state.content_history = []
 
-if "agent" not in st.session_state:
-    try:
-        st.session_state.agent = CopywritingGraphAgent()
-    except ValueError as e:
-        st.error(f"Error initializing agent: {e}")
+# Page configuration
+st.set_page_config(
+    page_title="AI Copywriting & Social Media Agent",
+    page_icon="✍️",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+
+# Initialize APIs and analyzers
+@st.cache_resource
+def initialize_apis():
+    """Initialize API clients."""
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
         st.error(
-            "Please make sure you have set up your .env file with the required API keys."
+            "GOOGLE_API_KEY not found in environment variables. Please set it in your .env file."
         )
         st.stop()
 
-
-# Helper functions
-def save_content(content_response: ContentResponse, filename: str = None):
-    """Save the generated content to a file"""
-    if filename is None:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        content_type = content_response.metadata.get("content_type", "content")
-        filename = f"{content_type}_{timestamp}.md"
-
-    with open(filename, "w") as f:
-        f.write(content_response.content)
-
-    return filename
+    return {
+        "gemini_api": GeminiAPI(api_key),
+        "brave_api": BraveSearchAPI(),
+        "seo_analyzer": SEOAnalyzer(),
+        "video_analyzer": ImprovedVideoAnalyzer(),
+    }
 
 
-def display_research_results(research_results):
-    """Display research results in an expander"""
-    if not research_results:
-        return
-
-    with st.expander("Research Sources", expanded=False):
-        for i, result in enumerate(research_results, 1):
-            st.markdown(f"### {i}. [{result.title}]({result.url})")
-            st.markdown(f"**Source:** {result.source}")
-            st.markdown(f"**Summary:** {result.snippet}")
-            st.markdown("---")
+apis = initialize_apis()
 
 
-def display_seo_analysis(metadata):
-    """Display SEO analysis results"""
-    if not metadata or "seo_score" not in metadata:
-        return
+def main():
+    """Main application function."""
+    # Display header and sidebar
+    display_header()
+    sidebar_options = display_sidebar()
 
-    seo_score = metadata.get("seo_score", 0)
+    # Create tabs for different functionalities
+    tab1, tab2 = st.tabs(["Content Generation", "Video Analysis"])
 
-    # Determine score color
-    if seo_score >= 80:
-        score_color = "green"
-    elif seo_score >= 60:
-        score_color = "orange"
-    else:
-        score_color = "red"
+    with tab1:
+        # Content generation tab
+        handle_content_generation(sidebar_options["use_advanced_seo"])
 
-    with st.expander("SEO Analysis", expanded=False):
-        # Display SEO score with gauge chart
-        col1, col2 = st.columns([1, 3])
+    with tab2:
+        # Video analysis tab
+        handle_video_analysis()
 
+
+def handle_content_generation(use_advanced_seo):
+    """Handle content generation functionality."""
+    # Display content form
+    form_data = display_content_form()
+
+    if form_data["submit"]:
+        # Show progress
+        with st.status("Generating content...", expanded=True) as status:
+            if form_data["include_research"]:
+                st.write("Researching relevant information...")
+
+            st.write("Crafting your content...")
+            st.write("Enhancing with direct-response marketing principles...")
+            st.write("Analyzing and optimizing for SEO...")
+
+            try:
+                # Create the prompt
+                prompt = create_content_prompt(form_data)
+
+                # Generate content
+                content = apis["gemini_api"].generate_content(prompt)
+
+                # Add to history
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
+                metadata = {
+                    "content_type": form_data["content_type"],
+                    "topic": form_data["topic"],
+                    "tone": form_data["tone"],
+                    "audience": form_data["audience"],
+                    "word_count": form_data["word_count"],
+                    "model_used": "models/gemini-2.0-pro-exp-02-05",
+                }
+                st.session_state.content_history.append((timestamp, metadata))
+
+                status.update(
+                    label="Content generated successfully!",
+                    state="complete",
+                    expanded=False,
+                )
+            except Exception as e:
+                st.error(f"Error generating content: {e}")
+                status.update(
+                    label="Error generating content", state="error", expanded=False
+                )
+                st.stop()
+
+        # Display generated content
+        st.markdown("## Generated Content")
+
+        # Display metadata
+        with st.expander("Content Metadata", expanded=False):
+            st.json(metadata)
+
+        # Perform SEO analysis
+        if use_advanced_seo:
+            # Use enhanced SEO analysis with free SEO tools
+            seo_results = apis["seo_analyzer"].analyze(content, form_data["keywords"])
+
+            # Add SEO score to metadata
+            metadata["seo_score"] = seo_results["overall_score"]
+            metadata["using_advanced_seo"] = True
+
+            # Display enhanced SEO analysis
+            display_enhanced_seo_analysis(seo_results)
+        else:
+            # Use basic SEO analysis
+            seo_results = apis["seo_analyzer"].analyze(content, form_data["keywords"])
+
+            # Add SEO score to metadata
+            metadata["seo_score"] = seo_results["overall_score"]
+
+            # Display basic SEO analysis
+            display_seo_analysis(seo_results)
+
+        # Display the content
+        st.markdown("### Content Preview")
+        st.markdown(content)
+
+        # Export options
+        col1, col2 = st.columns(2)
         with col1:
-            st.markdown(f"### SEO Score")
-            st.markdown(
-                f"<h1 style='color: {score_color};'>{seo_score:.1f}/100</h1>",
-                unsafe_allow_html=True,
-            )
+            if st.button("Save as Markdown"):
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"{form_data['content_type']}_{timestamp}.md"
+                with open(filename, "w") as f:
+                    f.write(content)
+                st.success(f"Content saved to {filename}")
 
         with col2:
-            # Create a simple gauge chart using progress bar
-            st.markdown("### SEO Performance")
-            st.progress(seo_score / 100)
-
-            # Add performance label
-            if seo_score >= 80:
-                st.success("Excellent SEO optimization")
-            elif seo_score >= 60:
-                st.warning("Good, but could be improved")
-            else:
-                st.error("Needs significant improvement")
-
-        # Add SEO recommendations section
-        st.markdown("### SEO Recommendations")
-        st.markdown(
-            "The content has been automatically optimized for search engines based on the following factors:"
-        )
-
-        st.markdown(
-            "✅ **Keyword optimization**: Strategic placement of keywords in title, headings, and content"
-        )
-        st.markdown(
-            "✅ **Content structure**: Proper heading hierarchy and paragraph structure"
-        )
-        st.markdown(
-            "✅ **Readability**: Appropriate sentence length and complexity for target audience"
-        )
-        st.markdown(
-            "✅ **Meta elements**: Inclusion of meta description and alt text for images"
-        )
-        st.markdown(
-            "✅ **Internal and external linking**: Strategic link placement for SEO benefit"
-        )
+            if st.button("Copy to Clipboard"):
+                st.code(content)
+                st.success("Content copied to clipboard (use the copy button above)")
 
 
-# Sidebar
-st.sidebar.title("AI Copywriting Agent")
-st.sidebar.markdown("Generate high-quality content for various use cases")
+def handle_video_analysis():
+    """Handle video analysis functionality."""
+    # Display video form
+    form_data = display_video_form()
 
-# Model info
-st.sidebar.markdown("### Model Information")
-st.sidebar.info(
-    "Using Google Gemini 1.5 Pro with LangGraph for advanced workflow management and direct-response optimization."
-)
+    if form_data["submit"]:
+        if not form_data["video_path"]:
+            st.error("Please upload a video file.")
+            return
 
-# Content history
-if st.session_state.content_history:
-    st.sidebar.markdown("## Content History")
-    for i, (timestamp, metadata) in enumerate(st.session_state.content_history):
-        if st.sidebar.button(
-            f"{metadata['content_type']} - {metadata['topic'][:20]}... ({timestamp})",
-            key=f"history_{i}",
-        ):
-            st.session_state.selected_history_index = i
+        # Show progress
+        with st.status("Analyzing video...", expanded=True) as status:
+            st.write("Extracting video frames...")
+            st.write("Analyzing visual content...")
+            st.write("Generating captions and hashtags...")
 
-# Main content area
-st.title("✍️ AI Copywriting Agent")
-st.markdown("Generate high-quality content optimized for your specific needs")
+            try:
+                # Create video analyzer
+                video_analyzer = ImprovedVideoAnalyzer(
+                    gemini_api=apis["gemini_api"], brave_api=apis["brave_api"]
+                )
 
-# Input form
-with st.form("content_request_form"):
-    col1, col2 = st.columns(2)
+                # Analyze video
+                result = video_analyzer.analyze_video(
+                    video_path=form_data["video_path"],
+                    content_type=VideoContentType(form_data["content_type"]),
+                    keywords=form_data["keywords"],
+                    max_frames=5,
+                )
 
-    with col1:
-        content_type = st.selectbox(
-            "Content Type",
-            options=[ct.value for ct in ContentType],
-            format_func=lambda x: x.replace("_", " ").title(),
-        )
+                status.update(
+                    label="Video analysis completed successfully!",
+                    state="complete",
+                    expanded=False,
+                )
+            except Exception as e:
+                st.error(f"Error analyzing video: {e}")
+                status.update(
+                    label="Error analyzing video", state="error", expanded=False
+                )
+                st.stop()
+            finally:
+                # Clean up temporary file
+                if os.path.exists(form_data["video_path"]):
+                    os.unlink(form_data["video_path"])
 
-        topic = st.text_area(
-            "Topic/Subject",
-            placeholder="Enter the main topic or subject of your content",
-        )
+        # Display video analysis results
+        display_video_analysis_results(result)
 
-        keywords = st.text_area(
-            "Keywords (one per line)",
-            placeholder="Enter keywords to include in your content (one per line)",
-        )
 
-        word_count = st.number_input(
-            "Target Word Count", min_value=50, max_value=5000, value=500, step=50
-        )
+def create_content_prompt(form_data):
+    """Create a prompt for content generation using advanced prompting techniques."""
 
-    with col2:
-        tone = st.selectbox(
-            "Tone",
-            options=[t.value for t in ToneType],
-            format_func=lambda x: x.replace("_", " ").title(),
-        )
+    # Define the persona based on content type
+    persona = {
+        "blog_post": "an expert content strategist with 10+ years of experience in SEO optimization",
+        "social_media": "a social media marketing expert who specializes in viral content creation",
+        "email": "an email marketing specialist with expertise in high-conversion campaigns",
+        "landing_page": "a conversion rate optimization expert who specializes in landing page design",
+        "product_description": "a professional copywriter who specializes in compelling product descriptions",
+        "ad_copy": "an advertising expert who creates high-converting ad campaigns",
+        "press_release": "a PR professional with experience writing for major publications",
+        "custom": "a professional copywriter with expertise in various content formats",
+    }.get(form_data["content_type"], "a professional copywriter")
 
-        audience = st.selectbox(
-            "Target Audience",
-            options=[a.value for a in AudienceType],
-            format_func=lambda x: x.replace("_", " ").title(),
-        )
+    # Create a more specific and detailed prompt using best practices
+    prompt = f"""
+    # Content Creation Request
 
-        include_research = st.checkbox("Include Web Research", value=True)
+    ## Your Role:
+    You are {persona}. Your task is to create {form_data["content_type"]} content that achieves the following objectives:
+    1. Engages the target audience effectively
+    2. Incorporates direct response marketing principles
+    3. Optimizes for search engines using the provided keywords
+    4. Drives specific actions from the reader
 
-        custom_instructions = st.text_area(
-            "Custom Instructions (Optional)",
-            placeholder="Enter any additional instructions or requirements",
-        )
+    ## Content Specifications:
+    - **Type:** {form_data["content_type"]}
+    - **Topic:** {form_data["topic"]}
+    - **Target Audience:** {form_data["audience"]}
+    - **Tone and Style:** {form_data["tone"]}
+    - **Primary Keywords:** {", ".join(form_data["keywords"]) if form_data["keywords"] else "No specific keywords provided"}
+    - **Length:** Approximately {form_data["word_count"]} words
+    {f"- **Platform:** {form_data['social_platform']}" if form_data.get("social_platform") else ""}
 
-    submit_button = st.form_submit_button("Generate Content")
+    {f"## Additional Context:\\n{form_data['custom_instructions']}" if form_data.get("custom_instructions") else ""}
 
-# Process form submission
-if submit_button:
-    # Parse keywords
-    keyword_list = [k.strip() for k in keywords.split("\n") if k.strip()]
+    ## Direct Response Marketing Framework:
+    Follow this structured approach to maximize engagement and conversions:
 
-    # Create content request
-    request = ContentRequest(
-        content_type=content_type,
-        topic=topic,
-        tone=tone,
-        audience=audience,
-        keywords=keyword_list,
-        word_count=word_count,
-        include_research=include_research,
-        custom_instructions=custom_instructions if custom_instructions else None,
-    )
+    1. **Problem Identification (25% of content)**
+       - Clearly articulate the specific problem or pain point the audience faces
+       - Use data, statistics, or relatable scenarios to validate the problem
+       - Create emotional resonance by showing understanding of their frustration
 
-    # Show progress
-    with st.status("Generating content...", expanded=True) as status:
-        if include_research:
-            st.write("Researching relevant information...")
+    2. **Solution Presentation (40% of content)**
+       - Present your solution logically, addressing each aspect of the problem
+       - Highlight unique benefits using the AIDA framework (Attention, Interest, Desire, Action)
+       - Include specific examples, case studies, or testimonials as evidence
 
-        st.write("Crafting your content...")
-        st.write("Enhancing with direct-response marketing principles...")
-        st.write("Analyzing and optimizing for SEO...")
+    3. **Objection Handling (15% of content)**
+       - Anticipate and address potential objections or concerns
+       - Use risk reversal techniques (guarantees, social proof, etc.)
+       - Create urgency through limited-time offers or scarcity elements
 
-        # Generate content
-        try:
-            content_response = st.session_state.agent.generate_content(request)
+    4. **Clear Call-to-Action (20% of content)**
+       - Provide explicit, compelling next steps
+       - Use action-oriented language that creates momentum
+       - Reinforce the primary benefit of taking action
 
-            # Add to history
-            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
-            st.session_state.content_history.append(
-                (timestamp, content_response.metadata)
-            )
+    ## SEO Optimization Requirements:
+    - Include primary keywords in the title, first paragraph, and at least one H2 heading
+    - Maintain keyword density between 0.5% and 2.5% (not too sparse, not stuffed)
+    - Structure content with proper heading hierarchy (H1 → H2 → H3)
+    - Keep paragraphs short (3-4 sentences maximum) for improved readability
+    - Include at least one relevant statistic or data point that supports your main argument
+    - For blog posts: suggest 2-3 internal linking opportunities
 
-            status.update(
-                label="Content generated successfully!",
-                state="complete",
-                expanded=False,
-            )
-        except Exception as e:
-            st.error(f"Error generating content: {e}")
-            status.update(
-                label="Error generating content", state="error", expanded=False
-            )
-            st.stop()
+    ## Content Structure:
+    1. **Compelling headline** that includes primary keyword and creates curiosity
+    2. **Strong opening paragraph** that hooks the reader and establishes relevance
+    3. **Well-organized body** with clear headings and logical flow
+    4. **Persuasive conclusion** with a specific, action-oriented CTA
 
-    # Display generated content
-    st.markdown("## Generated Content")
+    ## Do NOT include:
+    - Generic or vague statements without supporting evidence
+    - Excessive jargon that might confuse the target audience
+    - Overpromising or making claims that cannot be substantiated
+    - Walls of text without proper formatting and structure
 
-    # Display metadata
-    with st.expander("Content Metadata", expanded=False):
-        st.json(content_response.metadata)
+    ## Output Format:
+    Provide the complete content as requested, formatted appropriately for the content type, with proper Markdown formatting for headings, lists, and emphasis.
 
-    # Display research results if available
-    display_research_results(content_response.research_results)
+    ## Process Explanation:
+    Before writing the content, briefly outline your approach and how you'll incorporate the direct response marketing principles and SEO requirements. Then proceed with creating the full content.
+    """
 
-    # Display SEO analysis if available
-    display_seo_analysis(content_response.metadata)
+    return prompt
 
-    # Display the content
-    st.markdown("### Content Preview")
-    st.markdown(content_response.content)
 
-    # Export options
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Save as Markdown"):
-            filename = save_content(content_response)
-            st.success(f"Content saved to {filename}")
+def create_video_analysis_prompt(form_data, content_type):
+    """Create an improved prompt for video analysis using advanced prompting techniques."""
 
-    with col2:
-        if st.button("Copy to Clipboard"):
-            st.code(content_response.content)
-            st.success("Content copied to clipboard (use the copy button above)")
+    # Define the persona based on content type
+    persona = {
+        "instagram_reel": "a social media strategist specializing in Instagram growth with 8+ years of experience",
+        "youtube_short": "a YouTube optimization expert who has helped creators reach millions of views",
+        "tiktok": "a TikTok content strategist who understands viral trends and audience engagement",
+    }.get(content_type.value, "a social media content expert")
 
-# Display selected history item if applicable
-if hasattr(st.session_state, "selected_history_index"):
-    st.markdown("## Content from History")
-    st.write("This feature would display previously generated content from history")
-    # In a real implementation, you would store and retrieve the actual content
+    # Create platform-specific instructions
+    platform_instructions = {
+        "instagram_reel": """
+        - Create a caption that's engaging but concise (max 2200 characters)
+        - Focus on storytelling elements that create emotional connection
+        - Include a question or call-to-action to boost comments
+        - Suggest 20-30 hashtags organized by popularity (mix of broad, niche, and trending)
+        - Recommend optimal posting times based on content theme
+        """,
+        "youtube_short": """
+        - Create an attention-grabbing title (max 60 characters)
+        - Write a description that front-loads keywords (max 300 characters)
+        - Include 3-5 highly relevant hashtags
+        - Suggest end screens and cards to drive further engagement
+        - Recommend related video ideas to create a content series
+        """,
+        "tiktok": """
+        - Create a short, punchy caption with strong hook
+        - Include 3-5 trending hashtags plus 2-3 niche hashtags
+        - Suggest trending sounds that could complement the video
+        - Recommend follow-up content ideas to boost profile growth
+        - Include ideas for text overlay to improve retention
+        """,
+    }.get(content_type.value, "")
 
-# Run the app with: streamlit run app.py
+    # Create a more specific and detailed prompt using best practices
+    prompt = f"""
+    # Video Content Analysis Request
+
+    ## Your Role:
+    You are {persona}. Your task is to analyze the provided video frames and create optimized content that will maximize engagement, reach, and conversion for {content_type.value}.
+
+    ## Video Content Specifications:
+    - **Platform:** {content_type.value}
+    - **Keywords/Topics:** {", ".join(form_data["keywords"]) if form_data["keywords"] else "No specific keywords provided"}
+    - **Target Caption Length:** {form_data["caption_length"]} characters
+    {f"- **Additional Context:** {form_data['custom_instructions']}" if form_data.get("custom_instructions") else ""}
+
+    ## Platform-Specific Requirements:
+    {platform_instructions}
+
+    ## Analysis Process:
+    1. First, carefully analyze the video frames to understand:
+       - The main subject/focus of the video
+       - The apparent action or activity taking place
+       - The mood, tone, and aesthetic of the content
+       - Any text or recognizable elements visible
+       - The likely target audience based on visual cues
+
+    2. Based on your analysis, create:
+       - A strategic caption that will drive engagement
+       - Relevant hashtags organized by reach potential
+       - Specific recommendations to improve performance
+
+    ## Engagement Optimization:
+    - Include pattern interrupts or curiosity hooks to stop the scroll
+    - Create a sense of authenticity and relatability
+    - Use emotional triggers appropriate to the content
+    - Incorporate trending elements without forcing irrelevant content
+    - Suggest ways to encourage shares, saves, and comments
+
+    ## Output Format:
+    Structure your response in the following format:
+
+    **VIDEO ANALYSIS:**
+    [Provide a brief analysis of what you observe in the video frames]
+
+    **CAPTION:**
+    [The complete caption, optimized for the platform]
+
+    **HASHTAGS:**
+    [List of recommended hashtags, organized by category]
+
+    **PERFORMANCE RECOMMENDATIONS:**
+    [5 specific, actionable recommendations to improve engagement]
+
+    ## Important Guidelines:
+    - Be specific and actionable in your recommendations
+    - Avoid generic advice that could apply to any video
+    - Consider current platform algorithm preferences
+    - Focus on authentic engagement rather than gimmicks
+    - Ensure all suggestions align with the actual video content
+    """
+
+    return prompt
+
+
 if __name__ == "__main__":
-    pass
+    main()
