@@ -36,7 +36,7 @@ An AI-powered content creation assistant built with Pydantic and Streamlit that 
 5. Review the generated content along with SEO analysis
 6. Export or copy the optimized content
 
-### Video Analysis
+### Video Analysis (In Progress)
 
 1. Select the "Video Analysis" tab
 2. Upload a video file (MP4, MOV, AVI, or WEBM)
